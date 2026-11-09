@@ -1,0 +1,55 @@
+name: build-unsigned
+
+# 个人用的未签名 macOS 构建：只出 .app，不打 dmg，不签名、不做更新产物。
+# 应用名和 bundle id 都改了，可以和官方版同时装着、互不覆盖。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: build frontend
+        run: bun run build
+
+      - name: build app (ad-hoc signed, no dmg, no updater)
+        run: |
+          bun run tauri build --target aarch64-apple-darwin --bundles app --config '{
+            "productName": "markamd-perf",
+            "identifier": "md.markamd.perf",
+            "bundle": {
+              "createUpdaterArtifacts": false,
+              "macOS": { "signingIdentity": "-" }
+            }
+          }'
+
+      - name: list bundle
+        run: ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/macos/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markamd-perf-app
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: error
