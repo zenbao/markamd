@@ -12,6 +12,13 @@
   margin-top: 1em;
 }
 
+/* 很长的文档：让浏览器跳过屏外块的排版与绘制。
+   contain-intrinsic-size 给出屏外块的估计高度，滚动条长度不会因为没排过而不准。 */
+.mdv-prose[data-large] > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 .mdv-prose h1,
 .mdv-prose h2,
 .mdv-prose h3,

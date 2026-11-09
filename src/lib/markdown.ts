@@ -103,7 +103,7 @@ async function ensureLangsLoaded(h: Highlighter, langs: string[]): Promise<void>
   toLoad.forEach((l) => loadedLangs.add(l));
 }
 
-const md = new MarkdownIt({
+export const md = new MarkdownIt({
   html: false,
   linkify: true,
   typographer: true,
@@ -183,7 +183,11 @@ export async function ensureMarkdownReady(): Promise<void> {
   await getHighlighter();
 }
 
-export async function renderMarkdown(src: string, theme: Theme): Promise<string> {
+/**
+ * Prepare shiki for `src` and return the source markdown-it should parse
+ * (frontmatter masked, positions preserved).
+ */
+export async function prepareShiki(src: string, theme: Theme): Promise<string> {
   const renderSource = maskYamlFrontmatter(src);
   const langs = extractLangs(renderSource);
   if (langs.length > 0) {
@@ -193,5 +197,9 @@ export async function renderMarkdown(src: string, theme: Theme): Promise<string>
     await ensureLangsLoaded(h, langs);
     activeShikiTheme = shikiTheme;
   }
-  return md.render(renderSource);
+  return renderSource;
+}
+
+export async function renderMarkdown(src: string, theme: Theme): Promise<string> {
+  return md.render(await prepareShiki(src, theme));
 }

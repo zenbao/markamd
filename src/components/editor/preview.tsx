@@ -4,6 +4,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink } from "lucide-react";
 import { Button, Icon } from "@/components/primitives";
 import { applyTextDirection, renderMarkdown, useI18n, useTheme, type TextDirection } from "@/lib";
+import { applyBlocks, type MdBlocks } from "@/lib/markdown-blocks";
+import { renderBlocksOffThread } from "@/lib/markdown-renderer";
 import { extensionFromMarkdownAssetSrc, markdownMediaAssetForExtension } from "@/lib/media-assets";
 import inspectUrl from "@/assets/mascot/inspect.png";
 import { renderMermaidBlocks } from "@/lib/mermaid";
@@ -167,21 +169,41 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
     void onOpenPreviewWindow?.();
   }, [onOpenPreviewWindow]);
 
-  const [html, setHtml] = useState("");
-  const renderedHtml = useMemo(() => ({ __html: html }), [html]);
+  const [blocks, setBlocks] = useState<MdBlocks | null>(null);
 
-  // renderMarkdown lazy-loads shiki only when the document contains code.
-  // Cancelled flag guards against stale renders on rapid file/theme switches.
+  // 按块渲染，解析和排版放在 worker 里：大文档不再卡住界面线程。
+  // 取消标志防止快速切换文件、主题时把旧结果写进来。
   useEffect(() => {
     if (csvPreview) return;
     let cancelled = false;
-    void renderMarkdown(source, theme).then((h) => {
-      if (!cancelled) setHtml(h);
-    });
+    void renderBlocksOffThread(source, theme)
+      .then((next) => {
+        if (!cancelled) setBlocks(next);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (cancelled || message === "superseded") return;
+        // worker 不可用时退回主线程整篇渲染，宁可慢也不能不显示。
+        console.warn("marka.md: block renderer unavailable, falling back", message);
+        void renderMarkdown(source, theme).then((html) => {
+          if (cancelled || !articleRef.current) return;
+          articleRef.current.innerHTML = html;
+          setBlocks(null);
+        });
+      });
     return () => {
       cancelled = true;
     };
   }, [source, theme, csvPreview]);
+
+  // 只替换内容变了的块：其余块的 DOM 节点和排版都留着。
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article || !blocks) return;
+    applyBlocks(article, blocks);
+    // 块多的文档让浏览器跳过屏外块的排版和绘制。
+    article.toggleAttribute("data-large", blocks.blocks.length > 800);
+  }, [blocks]);
 
   // React owns the base markdown HTML; the effects below only decorate the
   // rendered DOM with media resolution, diagram viewers, and code copy buttons.
@@ -190,7 +212,7 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
     applyTextDirection(articleRef.current, textDirection);
     replaceRemoteMediaImages(articleRef.current);
     if (filePath) void resolveMarkdownMediaAssets(articleRef.current, filePath);
-  }, [html, filePath, csvPreview, textDirection]);
+  }, [blocks, filePath, csvPreview, textDirection]);
 
   useEffect(() => {
     if (!articleRef.current || csvPreview) return;
@@ -202,7 +224,7 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
       cleanupPlantUml();
       cleanupImages();
     };
-  }, [html, csvPreview, openDiagramViewer, viewerLabels]);
+  }, [blocks, csvPreview, openDiagramViewer, viewerLabels]);
 
   useEffect(() => {
     if (!articleRef.current || csvPreview) return;
@@ -217,7 +239,7 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
       cancelled = true;
       cleanup();
     };
-  }, [html, theme, csvPreview, openDiagramViewer, viewerLabels]);
+  }, [blocks, theme, csvPreview, openDiagramViewer, viewerLabels]);
 
   useEffect(() => {
     const article = articleRef.current;
@@ -240,7 +262,7 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
     };
     article.addEventListener("click", onClick);
     return () => article.removeEventListener("click", onClick);
-  }, [html, csvPreview]);
+  }, [blocks, csvPreview]);
 
   if (!csvPreview && source.trim().length === 0) {
     return (
@@ -290,12 +312,7 @@ export function Preview({ source, filePath, onOpenPreviewWindow, textDirection =
         {csvPreview ? (
           <CsvPreview source={source} fileName={filePath ? basename(filePath) : undefined} />
         ) : (
-          <article
-            ref={articleRef}
-            className="mdv-prose"
-            data-theme={theme}
-            dangerouslySetInnerHTML={renderedHtml}
-          />
+          <article ref={articleRef} className="mdv-prose" data-theme={theme} />
         )}
       </div>
       {viewer ? (

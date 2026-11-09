@@ -14,6 +14,9 @@ export default defineConfig(async () => ({
     },
   },
 
+  // 渲染 worker 以模块方式打包（见 src/lib/markdown-renderer.ts）。
+  worker: { format: "es" },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
